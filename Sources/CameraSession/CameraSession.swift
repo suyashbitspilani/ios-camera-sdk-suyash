@@ -227,6 +227,29 @@ public final class CameraSession {
         device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
         device.unlockForConfiguration()
 
+        // Set up video data output for pixel buffer delivery
+        if let existingOutput = videoOutput {
+            captureSession.removeOutput(existingOutput)
+        }
+
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        ]
+        output.setSampleBufferDelegate(self, queue: sessionQueue)
+
+        guard captureSession.canAddOutput(output) else {
+            captureSession.commitConfiguration()
+            let dims = FormatResolver.dimensions(for: resolution)
+            throw CameraSessionError.unsupportedFormat(
+                requested: "\(dims.width)x\(dims.height) @ \(fps) fps",
+                available: ["Video output could not be added to session"]
+            )
+        }
+        captureSession.addOutput(output)
+        videoOutput = output
+
         captureSession.commitConfiguration()
 
         logger.info("Device configured: \(match.dimensions.width)x\(match.dimensions.height) @ \(fps) fps")
@@ -283,5 +306,37 @@ public final class CameraSession {
             self.state = .configured
             self.logger.info("Capture session stopped")
         }
+    }
+}
+
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+
+@available(iOS 15.0, *)
+extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    public func captureOutput(_ output: AVCaptureOutput,
+                              didOutput sampleBuffer: CMSampleBuffer,
+                              from connection: AVCaptureConnection) {
+        guard state == .running else { return }
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            logger.warning("Failed to get pixel buffer from sample buffer")
+            return
+        }
+
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+
+        delegateQueue.async { [weak self] in
+            guard let self else { return }
+            self.delegate?.cameraSession(self,
+                                         didOutputPixelBuffer: pixelBuffer,
+                                         timestamp: timestamp)
+        }
+    }
+
+    public func captureOutput(_ output: AVCaptureOutput,
+                              didDrop sampleBuffer: CMSampleBuffer,
+                              from connection: AVCaptureConnection) {
+        logger.debug("Dropped frame")
     }
 }
