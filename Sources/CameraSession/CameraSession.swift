@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import CoreVideo
+import Foundation
 import os
 
 /// A reusable camera capture module that manages an `AVCaptureSession` and
@@ -22,7 +23,7 @@ import os
 ///   `start()` and `stop()` are non-blocking and safe to call from any queue,
 ///   including from within the delegate callback.
 @available(iOS 15.0, *)
-public final class CameraSession {
+public final class CameraSession: NSObject {
 
     // MARK: - State Machine
 
@@ -71,6 +72,7 @@ public final class CameraSession {
     /// ```
     public init(delegateQueue: DispatchQueue? = nil) {
         self.delegateQueue = delegateQueue ?? .main
+        super.init()
         logger.info("CameraSession initialized, delegate queue: \(self.delegateQueue.label)")
         registerInterruptionObservers()
     }

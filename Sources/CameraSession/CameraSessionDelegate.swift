@@ -16,6 +16,7 @@ import CoreVideo
 ///     }
 /// }
 /// ```
+@available(iOS 15.0, *)
 public protocol CameraSessionDelegate: AnyObject {
 
     /// Called each time a new video frame is captured.
