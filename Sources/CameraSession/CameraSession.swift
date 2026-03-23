@@ -51,6 +51,9 @@ public final class CameraSession {
     private var state: State = .idle
 
     private let logger = Logger(subsystem: "com.flam.camerasession", category: "session")
+    private let signpostLog = OSLog(subsystem: "com.flam.camerasession", category: .pointsOfInterest)
+
+    private let formatResolver = FormatResolver()
 
     // MARK: - Init
 
@@ -118,9 +121,63 @@ public final class CameraSession {
             return
         }
 
+        let signpostID = OSSignpostID(log: signpostLog)
+        os_signpost(.begin, log: signpostLog, name: "configure", signpostID: signpostID)
+        defer {
+            os_signpost(.end, log: signpostLog, name: "configure", signpostID: signpostID)
+        }
+
         logger.info("Configuring for \(resolution.rawValue) @ \(fps) fps")
 
-        // Implementation wired up in commit 6
+        // Discover the back camera
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+                                                    for: .video,
+                                                    position: .back) else {
+            let dims = FormatResolver.dimensions(for: resolution)
+            throw CameraSessionError.unsupportedFormat(
+                requested: "\(dims.width)x\(dims.height) @ \(fps) fps",
+                available: []
+            )
+        }
+
+        // Resolve a matching format for the requested resolution + FPS
+        let match = try formatResolver.resolve(preset: resolution, fps: fps, device: device)
+        logger.info("Resolved format: \(match.dimensions.width)x\(match.dimensions.height)")
+
+        // Tear down any existing input before reconfiguring
+        captureSession.beginConfiguration()
+
+        if let existingInput = deviceInput {
+            captureSession.removeInput(existingInput)
+        }
+
+        // Add the device as input
+        let input = try AVCaptureDeviceInput(device: device)
+        guard captureSession.canAddInput(input) else {
+            captureSession.commitConfiguration()
+            let dims = FormatResolver.dimensions(for: resolution)
+            throw CameraSessionError.unsupportedFormat(
+                requested: "\(dims.width)x\(dims.height) @ \(fps) fps",
+                available: ["Device input could not be added to session"]
+            )
+        }
+        captureSession.addInput(input)
+        deviceInput = input
+        currentDevice = device
+
+        // Use inputPriority so our manual format selection takes precedence
+        captureSession.sessionPreset = .inputPriority
+
+        // Lock the device and apply format + frame duration
+        try device.lockForConfiguration()
+        device.activeFormat = match.format
+        device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+        device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+        device.unlockForConfiguration()
+
+        captureSession.commitConfiguration()
+
+        logger.info("Device configured: \(match.dimensions.width)x\(match.dimensions.height) @ \(fps) fps")
         state = .configured
     }
 
