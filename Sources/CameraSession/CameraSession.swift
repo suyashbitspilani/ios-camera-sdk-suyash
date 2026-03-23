@@ -72,24 +72,76 @@ public final class CameraSession {
     public init(delegateQueue: DispatchQueue? = nil) {
         self.delegateQueue = delegateQueue ?? .main
         logger.info("CameraSession initialized, delegate queue: \(self.delegateQueue.label)")
+        registerInterruptionObservers()
     }
 
     deinit {
         logger.info("CameraSession deinit — tearing down capture session")
 
+        NotificationCenter.default.removeObserver(self)
         captureSession.stopRunning()
 
-        // Remove all inputs
         for input in captureSession.inputs {
             captureSession.removeInput(input)
         }
-
-        // Remove all outputs
         for output in captureSession.outputs {
             captureSession.removeOutput(output)
         }
 
         logger.info("CameraSession cleanup complete")
+    }
+
+    // MARK: - Interruption Handling
+
+    private func registerInterruptionObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sessionWasInterrupted(_:)),
+            name: AVCaptureSession.wasInterruptedNotification,
+            object: captureSession
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sessionInterruptionEnded(_:)),
+            name: AVCaptureSession.interruptionEndedNotification,
+            object: captureSession
+        )
+    }
+
+    @objc private func sessionWasInterrupted(_ notification: Notification) {
+        guard let reasonValue = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int,
+              let reason = AVCaptureSession.InterruptionReason(rawValue: reasonValue) else {
+            logger.warning("Capture session interrupted (unknown reason)")
+            return
+        }
+
+        switch reason {
+        case .videoDeviceNotAvailableInBackground:
+            logger.info("Session interrupted: app entered background")
+        case .audioDeviceInUseByAnotherClient:
+            logger.info("Session interrupted: audio device in use by another client")
+        case .videoDeviceInUseByAnotherClient:
+            logger.warning("Session interrupted: camera in use by another app")
+        case .videoDeviceNotAvailableWithMultipleForegroundApps:
+            logger.info("Session interrupted: multitasking (Slide Over / Split View)")
+        case .videoDeviceNotAvailableDueToSystemPressure:
+            logger.warning("Session interrupted: system thermal pressure")
+        @unknown default:
+            logger.warning("Session interrupted: unrecognized reason (\(reasonValue))")
+        }
+    }
+
+    @objc private func sessionInterruptionEnded(_ notification: Notification) {
+        logger.info("Session interruption ended")
+
+        // Auto-restart if we were running before the interruption
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if self.state == .running && !self.captureSession.isRunning {
+                self.logger.info("Auto-restarting session after interruption")
+                self.captureSession.startRunning()
+            }
+        }
     }
 
     // MARK: - Public API
