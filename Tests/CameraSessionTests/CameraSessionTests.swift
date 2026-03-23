@@ -34,8 +34,10 @@ final class CameraSessionTests: XCTestCase {
     /// semantically stronger than Thread.isMainThread because GCD doesn't
     /// guarantee a 1:1 mapping between queues and threads.
     ///
-    /// On simulator without a physical camera this test validates the wiring:
-    /// if a frame were delivered, it would arrive on the correct queue.
+    /// **Requires a physical camera device.** On the iOS simulator no frames
+    /// are delivered (there is no camera hardware), so the expectation will
+    /// time out. This is intentional — the test validates runtime queue
+    /// affinity and is meant to be run on a real device.
     func testDelegateFiresOnCustomQueue() {
         let customQueue = DispatchQueue(label: "com.test.delegateQueue")
         let session = CameraSession(delegateQueue: customQueue)
