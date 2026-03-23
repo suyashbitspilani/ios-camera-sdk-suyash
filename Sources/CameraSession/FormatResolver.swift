@@ -1,0 +1,4 @@
+import AVFoundation
+
+struct FormatResolver {
+}
